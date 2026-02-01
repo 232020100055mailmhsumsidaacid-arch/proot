@@ -1,60 +1,62 @@
-name: build
+name: Build PRoot Multi-Arch (Static)
 
 on:
-  push:
-    branches:
-      - master
-  pull_request:
-    types: [opened, synchronize, reopened]
-  # Ini bagian yang ditambahin buat trigger manual
   workflow_dispatch:
 
 jobs:
-  build:
-    name: "${{ matrix.SECCOMP == '1' && 'seccomp' || 'no-seccomp' }}"
+  build-arm64:
     runs-on: ubuntu-latest
-    env:
-      BUILD_WRAPPER_OUT_DIR: tmp
-    strategy:
-      fail-fast: false
-      matrix:
-        SECCOMP: [ 0, 1 ]
-
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          submodules: true
 
-      - name: Install sonar-scanner and build-wrapper
-        uses: sonarsource/sonarcloud-github-c-cpp@v1
-
-      - name: Install build dependencies
+      - name: Install Cross-Compiler & Libs
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -qq clang-tools-12 curl gdb lcov libarchive-dev libtalloc-dev sloccount strace swig uthash-dev python3-dev lzop
+          sudo apt-get update
+          # Install compiler buat ARM64 dan library statisnya
+          sudo apt-get install -y \
+            gcc-aarch64-linux-gnu \
+            binutils-aarch64-linux-gnu \
+            libtalloc-dev:arm64 \
+            libarchive-dev:arm64 \
+            libseccomp-dev:arm64 \
+            uthash-dev
 
-      - name: Gather analytics
-        run: sloccount --details .
-
-      - name: Build elf loader, proot, and care
+      - name: Build Static PRoot (ARM64)
         run: |
-          build-wrapper-linux-x86-64 --out-dir ${{ env.BUILD_WRAPPER_OUT_DIR }} make -C src loader.elf loader-m32.elf build.h
-          build-wrapper-linux-x86-64 --out-dir ${{ env.BUILD_WRAPPER_OUT_DIR }} env CFLAGS=--coverage LDFLAGS=--coverage make -C src proot care V=1
+          # Kita arahkan CC ke cross-compiler
+          make -C src proot \
+            CC=aarch64-linux-gnu-gcc \
+            LDFLAGS="-static" \
+            V=1
 
-      - name: Execute test suite
-        continue-on-error: true
-        timeout-minutes: 10
+      - name: Upload ARM64 Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: proot-static-arm64
+          path: src/proot
+
+  build-x86_64:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install Libs
         run: |
-          build-wrapper-linux-x86-64 --out-dir ${{ env.BUILD_WRAPPER_OUT_DIR }} env ${{ matrix.SECCOMP == '0' && 'PROOT_NO_SECCOMP=1' || '' }} PATH=/bin:/usr/bin:/sbin:/usr/sbin:$PWD/src make -C test -j $(nproc) QUIET_LOG=$PWD/test.log
+          sudo apt-get update
+          sudo apt-get install -y libtalloc-dev libarchive-dev libseccomp-dev uthash-dev
 
-      - name: Output test log
-        if: always()
-        continue-on-error: true
-        run: ([ -f test.log ] && cat test.log) || true
-
-      - name: Run sonar-scanner
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SONAR_TOKEN: ${{ secrets.SONARCLOUD_TOKEN }}
+      - name: Build Static PRoot (x86_64)
         run: |
-          sonar-scanner --define sonar.cfamily.build-wrapper-output="${{ env.BUILD_WRAPPER_OUT_DIR }}"
+          make -C src proot LDFLAGS="-static"
+
+      - name: Upload x86_64 Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: proot-static-x86_64
+          path: src/proot
