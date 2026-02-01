@@ -6,6 +6,8 @@ on:
       - master
   pull_request:
     types: [opened, synchronize, reopened]
+  # Ini bagian yang ditambahin buat trigger manual
+  workflow_dispatch:
 
 jobs:
   build:
